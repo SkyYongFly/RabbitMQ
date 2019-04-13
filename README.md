@@ -637,7 +637,7 @@ public class Consumer2 {//获取消息的队列名称
 
   rabbitmq支持消息应答，消费者发送一个消息应答，告诉rabbitmq这个消息我已经处理完成，你可以删除了，然后rabbitmq就会删除内存中的消息；
 
-* 消息应答默认是打开的，但是如果rabbitmq的服务器挂了，消息依然会消息，所以需要持久化消息
+* 消息应答默认是打开的，但是如果rabbitmq的服务器挂了，消息会消失，所以需要持久化消息
   消息持久化：
 
   ```java
@@ -648,3 +648,219 @@ public class Consumer2 {//获取消息的队列名称
 
 
   对于已经定义的队列queue，不允许重新定义；
+
+#### **3.5 publish_subscribe订阅模式**
+
+* 模型
+
+  ![1555140348050](README.assets/1555140348050.png)
+
+  1、一个生产者，多个消费者；
+
+  2、每个消费者都有自己的队列；
+
+  3、生产者没有直接把消息发送到队列，而是发送到了交换机 转发器  exchange；
+
+  4、每个队列都要绑定到交换机上；
+
+  5、生产者发送的消息经过交换机 到达队列  就能实现 一个消息被多个消费者消费；
+
+* 代码示例
+
+  生产者：
+
+  ```java
+  package com.example.ps;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  
+  /**
+   * 订阅模式生产者：只负责把消息发送到交换机
+   */
+  public class Producer {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_name";
+  
+      public static void main(String[] args) throws IOException, TimeoutException {
+          //获取一个连接
+          Connection connection = ConnectionUtils.getConnection();
+  
+          //从连接中获取一个通道
+          Channel channel = connection.createChannel();
+  
+          //声明交换机
+          channel.exchangeDeclare(EXCHANGE_NAME, "fanout"); //分发
+          //发送消息
+          String msg = "Hello Publish_Subscribe !";
+          channel.basicPublish(EXCHANGE_NAME, "", null, msg.getBytes());
+          System.out.println("****发送了一条消息：" + msg);
+  
+          //关闭资源连接
+          channel.close();
+          connection.close();
+      }
+  }
+  ```
+
+  控制台查看交换机：
+
+  ![1555140629138](README.assets/1555140629138.png)
+
+  ![1555140649068](README.assets/1555140649068.png)
+
+  **但是却不存在消息，因为消息已经丢失了，交换机是没有存储消息的能力的，只有队列queue能存储消息，所以我们需要消费者产生队列绑定到交换机exchange**
+
+  
+
+  消费者1：
+
+  ```java
+  package com.example.ps;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.AMQP;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  import com.rabbitmq.client.DefaultConsumer;
+  import com.rabbitmq.client.Envelope;
+  
+  /**
+   * 订阅模式消费者1：产生一个队列，绑定到交换机，获取消息
+   */
+  public class Consumer1 {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_name";
+      //设置消息的队列名称，例如发送邮件的队列
+      private static final String QUEUE_NAME = "test_queue_email";
+  
+      public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+          //获取连接
+          Connection connection = ConnectionUtils.getConnection();
+          //创建频道
+          final Channel channel = connection.createChannel();
+          //队列声明
+          channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+  
+          //绑定队列到交换机
+          channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, "");
+  
+          //保证队列一次只分发一个
+          channel.basicQos(1);
+  
+          //定义消费者
+          DefaultConsumer consumer = new DefaultConsumer(channel){
+              @Override
+              public void handleDelivery(String consumerTag, Envelope envelope,
+                                         AMQP.BasicProperties properties, byte[] body) throws IOException {
+                  String msg = new String(body, "UTF-8");
+                  System.out.println("****收到了一条消息：" + msg);
+  
+                  try {
+                      //模拟业务耗时操作
+                      Thread.sleep(50);
+                  } catch (InterruptedException e) {
+                      e.printStackTrace();
+                  }finally {
+                      System.out.println(msg + "：处理完成");
+                      //处理完成手动应答
+                      channel.basicAck(envelope.getDeliveryTag(), false);
+                  }
+              }
+          };
+  
+          //监听队列
+          boolean autoAck = false; //自动应答关闭
+          channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+      }
+  }
+  ```
+
+  消费者2：
+
+  ```java
+  package com.example.ps;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.AMQP;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  import com.rabbitmq.client.DefaultConsumer;
+  import com.rabbitmq.client.Envelope;
+  
+  /**
+   * 订阅模式消费者2：产生一个队列，绑定到交换机，获取消息
+   */
+  public class Consumer2 {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_name";
+      //设置消息的队列名称，例如发送短信的队列
+      private static final String QUEUE_NAME = "test_queue_sms";
+  
+      public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+          //获取连接
+          Connection connection = ConnectionUtils.getConnection();
+          //创建频道
+          final Channel channel = connection.createChannel();
+          //队列声明
+          channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+  
+          //绑定队列到交换机
+          channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, "");
+  
+          //保证队列一次只分发一个
+          channel.basicQos(1);
+  
+          //定义消费者
+          DefaultConsumer consumer = new DefaultConsumer(channel){
+              @Override
+              public void handleDelivery(String consumerTag, Envelope envelope,
+                                         AMQP.BasicProperties properties, byte[] body) throws IOException {
+                  String msg = new String(body, "UTF-8");
+                  System.out.println("****收到了一条消息：" + msg);
+  
+                  try {
+                      //模拟业务耗时操作
+                      Thread.sleep(500);
+                  } catch (InterruptedException e) {
+                      e.printStackTrace();
+                  }finally {
+                      System.out.println(msg + "：处理完成");
+                      //处理完成手动应答
+                      channel.basicAck(envelope.getDeliveryTag(), false);
+                  }
+              }
+          };
+  
+          //监听队列
+          boolean autoAck = false; //自动应答关闭
+          channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+      }
+  }
+  ```
+
+  现在生产者发送一条消息试试：
+
+  ![1555140774384](README.assets/1555140774384.png)
+
+  消费者1和消费者2都接收到了这条消息：
+
+  ![1555140822107](README.assets/1555140822107.png)
+
+* 转发器
+
+  Exchange(交换机 转发器)：一方面接受生产者的消息，另一方面向队列推送消息匿名转发；
+  上面例子指定了fanout模式Fanout(不处理路由键)；
+
+  ![1555140880454](README.assets/1555140880454.png)
+
