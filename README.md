@@ -431,5 +431,194 @@ public class Consumer2 {//获取消息的队列名称
 
 ![1555122682785](README.assets/1555122682785.png)
 
-可以看到两个消费者依次消费消息，且保证两个消费的的公平性；
+可以看到两个消费者依次消费消息，且保证两个消费的的数量公平性；
 
+##### **3.3.2 公平分发**
+
+公平分发:采用手动应答的方式，即消费者处理完成通知队列处理完成，这样处理快的客户端可以分到更多的消息
+
+生产者：
+
+```java
+package com.example.workfair;
+
+import java.io.IOException;
+import java.util.concurrent.TimeoutException;
+
+import com.example.simple.ConnectionUtils;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+
+/**
+ * 工作队列之公平分发生产者
+ */
+public class Producer {
+    //定义队列名称
+    private static final String QUEUE_NAME = "test_queue_name";
+
+    public static void main(String[] args) throws IOException, TimeoutException {
+        //获取一个连接
+        Connection connection = ConnectionUtils.getConnection();
+
+        //从连接中获取一个通道
+        Channel channel = connection.createChannel();
+        //创建队列声明
+        channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+
+        //设置每次发送到队列的消息只有一个，需要等到消费者发送处理完的响应后才继续发送消息
+        int prefetchCount = 1;
+        channel.basicQos(prefetchCount);
+
+        for(int i = 0; i < 50; i++){
+            //定义要发送的消息
+            String msg = "Message [" + i + "]";
+            //发送消息
+            channel.basicPublish("", QUEUE_NAME, null, msg.getBytes());
+            System.out.println("----发送了一条消息：" + msg);
+
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        //关闭资源连接
+        channel.close();
+        connection.close();
+    }
+
+}
+```
+
+重点在于消息的再次发送等待前一个消费完成：
+
+![1555126208038](README.assets/1555126208038.png)
+
+消费者1：
+
+```java
+package com.example.workfair;
+
+import com.example.simple.ConnectionUtils;
+import com.rabbitmq.client.*;
+
+import java.io.IOException;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * 工作队列之公平分发消费者1
+ */
+public class Consumer1 {//获取消息的队列名称
+    private static final String QUEUE_NAME = "test_queue_name";
+
+    public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+        //获取连接
+        Connection connection = ConnectionUtils.getConnection();
+        //创建频道
+        final Channel channel = connection.createChannel();
+        //队列声明
+        channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+        //保证队列一次只分发一个
+        channel.basicQos(1);
+
+        //定义消费者
+        DefaultConsumer consumer = new DefaultConsumer(channel){
+            @Override
+            public void handleDelivery(String consumerTag, Envelope envelope,
+                                       AMQP.BasicProperties properties, byte[] body) throws IOException {
+                String msg = new String(body, "UTF-8");
+                System.out.println("****收到了一条消息：" + msg);
+
+                try {
+                    //模拟业务耗时操作
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }finally {
+                    System.out.println(msg + "：处理完成");
+                    //处理完成手动应答
+                    channel.basicAck(envelope.getDeliveryTag(), false);
+                }
+            }
+        };
+
+        //监听队列
+        boolean autoAck = false; //自动应答关闭
+        channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+    }
+}
+```
+
+消费者2：
+
+```java
+package com.example.workfair;
+
+import java.io.IOException;
+import java.util.concurrent.TimeoutException;
+
+import com.example.simple.ConnectionUtils;
+import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.DefaultConsumer;
+import com.rabbitmq.client.Envelope;
+
+/**
+ * 工作队列之公平分发消费者2
+ */
+public class Consumer2 {//获取消息的队列名称
+    private static final String QUEUE_NAME = "test_queue_name";
+
+    public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+        //获取连接
+        Connection connection = ConnectionUtils.getConnection();
+
+        //创建频道
+        final Channel channel = connection.createChannel();
+        //队列声明
+        channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+
+        //保证队列一次只分发一个
+        channel.basicQos(1);
+
+        //定义消费者
+        DefaultConsumer consumer = new DefaultConsumer(channel){
+            @Override
+            public void handleDelivery(String consumerTag, Envelope envelope,
+                                       AMQP.BasicProperties properties, byte[] body) throws IOException {
+                String msg = new String(body, "UTF-8");
+                System.out.println("****收到了一条消息：" + msg);
+
+                try {
+                    //模拟业务耗时操作
+                    Thread.sleep(500);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }finally {
+                    System.out.println(msg + "：处理完成");
+                    //处理完成手动应答
+                    channel.basicAck(envelope.getDeliveryTag(), false);
+                }
+            }
+        };
+
+        //监听队列
+        boolean autoAck = false; //自动应答关闭
+        channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+    }
+}
+```
+
+启动消费者再启动生产者后：
+
+消费者1消费：
+
+![1555126386319](README.assets/1555126386319.png)
+
+消费者2消费：
+
+![1555126403923](README.assets/1555126403923.png)
+
+可以看到两个消费者消费消息并不是公平的，谁消费的快谁处理的消息就多；
