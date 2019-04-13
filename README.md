@@ -622,3 +622,29 @@ public class Consumer2 {//获取消息的队列名称
 ![1555126403923](README.assets/1555126403923.png)
 
 可以看到两个消费者消费消息并不是公平的，谁消费的快谁处理的消息就多；
+
+#### **3.4 消息应答ack与消息持久化durable**
+
+* boolean autoAck = true 
+
+  自动确认模式：一旦rabbitmq将消息分发给消费者，就会从内存中删除；
+
+  缺点：如果杀死正在执行的消费者，就会丢失正在处理的消息；
+
+* boolean autoAck = false 
+
+  手动确认模式：如果有一个消费者挂掉，就会交付给其他消费者；
+
+  rabbitmq支持消息应答，消费者发送一个消息应答，告诉rabbitmq这个消息我已经处理完成，你可以删除了，然后rabbitmq就会删除内存中的消息；
+
+* 消息应答默认是打开的，但是如果rabbitmq的服务器挂了，消息依然会消息，所以需要持久化消息
+  消息持久化：
+
+  ```java
+  //声明队列
+  boolean durable = false;
+  channel.queueDeclare(QUEUE_NAME, durable, false, false, null);
+  ```
+
+
+  对于已经定义的队列queue，不允许重新定义；
