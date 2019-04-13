@@ -168,7 +168,7 @@
 
   获取队列消息（旧方法）：通过循环监听（严重浪费性能）
 
-  ```
+  ```java
   package com.example.simple;
   
   import java.io.IOException;
@@ -211,7 +211,7 @@
 
   新API方法：利用监听器机制
 
-  ```
+  ```java
   //获取消息的队列名称
       private static final String QUEUE_NAME = "test_queue_name";
   
@@ -250,3 +250,186 @@
 * 缺点
 
   耦合性高 ，生产者一一对应消费者对列名变更，要同时变更代码
+
+#### **3.3 Work queues工作队列**
+
+* 模型：同一个队列多个消费者
+
+  ![1555122028961](README.assets/1555122028961.png)
+
+##### **3.3.1 轮询分发**
+
+定义多个消费者，如果每个消费者消费的消息都一样多，这叫做轮询分发（round-robin）
+
+生产者：发送50个消息
+
+```java
+package com.example.work;
+
+import java.io.IOException;
+import java.util.concurrent.TimeoutException;
+
+import com.example.simple.ConnectionUtils;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+
+/**
+ * 工作队列之轮询分发生产者
+ */
+public class Producer {
+    //定义队列名称
+    private static final String QUEUE_NAME = "test_queue_name";
+
+    public static void main(String[] args) throws IOException, TimeoutException {
+        //获取一个连接
+        Connection connection = ConnectionUtils.getConnection();
+
+        //从连接中获取一个通道
+        Channel channel = connection.createChannel();
+        //创建队列声明
+        channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+
+        for(int i = 0; i < 50; i++){
+            //定义要发送的消息
+            String msg = "Message [" + i + "]";
+            //发送消息
+            channel.basicPublish("", QUEUE_NAME, null, msg.getBytes());
+            System.out.println("----发送了一条消息：" + msg);
+
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        //关闭资源连接
+        channel.close();
+        connection.close();
+    }
+
+}
+```
+
+消费者1：
+
+```java
+package com.example.work;
+
+import java.io.IOException;
+import java.util.concurrent.TimeoutException;
+
+import com.example.simple.ConnectionUtils;
+import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.DefaultConsumer;
+import com.rabbitmq.client.Envelope;
+
+/**
+ * 工作队列之轮询分发消费者1
+ */
+public class Consumer1 {//获取消息的队列名称
+    private static final String QUEUE_NAME = "test_queue_name";
+
+    public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+        //获取连接
+        Connection connection = ConnectionUtils.getConnection();
+
+        //创建频道
+        Channel channel = connection.createChannel();
+        //队列声明
+        channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+
+        //定义消费者
+        DefaultConsumer consumer = new DefaultConsumer(channel){
+            @Override
+            public void handleDelivery(String consumerTag, Envelope envelope,
+                                       AMQP.BasicProperties properties, byte[] body) throws IOException {
+                String msg = new String(body, "UTF-8");
+                System.out.println("****收到了一条消息：" + msg);
+
+                try {
+                    //模拟业务耗时操作
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }finally {
+                    System.out.println(msg + "：处理完成");
+                }
+            }
+        };
+
+        //监听队列
+        boolean autoAck = true; //自动应答
+        channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+    }
+}
+```
+
+消费者2：
+
+```java
+package com.example.work;
+
+import com.example.simple.ConnectionUtils;
+import com.rabbitmq.client.*;
+
+import java.io.IOException;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * 工作队列之轮询分发消费者2
+ */
+public class Consumer2 {//获取消息的队列名称
+    private static final String QUEUE_NAME = "test_queue_name";
+
+    public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+        //获取连接
+        Connection connection = ConnectionUtils.getConnection();
+
+        //创建频道
+        Channel channel = connection.createChannel();
+        //队列声明
+        channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+
+        //定义消费者
+        DefaultConsumer consumer = new DefaultConsumer(channel){
+            @Override
+            public void handleDelivery(String consumerTag, Envelope envelope,
+                                       AMQP.BasicProperties properties, byte[] body) throws IOException {
+                String msg = new String(body, "UTF-8");
+                System.out.println("****收到了一条消息：" + msg);
+
+                try {
+                    //模拟业务耗时操作
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }finally {
+                    System.out.println(msg + "：处理完成");
+                }
+            }
+        };
+
+        //监听队列
+        boolean autoAck = true; //自动应答
+        channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+    }
+}
+```
+
+注意先启动两个消费者，不然先启动生产者发送消息，再启动消费者时候，第一个消费者启动完成了会直接把所有的消息都消费掉，导致观察不到轮询分发的现象。现在我们先启动了两个消费者等待消息，再启动生产者发送消息：
+
+![1555122363508](README.assets/1555122363508.png)
+
+消费者1控制台输出：
+
+![1555122663237](README.assets/1555122663237.png)
+
+消费者2控制台输出：
+
+![1555122682785](README.assets/1555122682785.png)
+
+可以看到两个消费者依次消费消息，且保证两个消费的的公平性；
+
