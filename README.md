@@ -864,3 +864,223 @@ public class Consumer2 {//获取消息的队列名称
 
   ![1555140880454](README.assets/1555140880454.png)
 
+#### **3.6 路由模式**
+
+* 模型
+
+Direct (处理路由键)：将消息发送到指定的、匹配的队列相当于身份标识，根据标识匹配；
+
+相当于一堆队列绑定到路由，路由发送消息并不是直接发送到所有队列，而是根据设置的匹配标识来将消息发送到指定队列；
+
+![1555141110578](README.assets/1555141110578.png)
+
+![1555141117596](README.assets/1555141117596.png)
+
+* 代码示例
+
+  生产者：
+
+  ```java
+  package com.example.routing;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  
+  /**
+   *  路由模式生产者
+   */
+  public class Producer {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_direct";
+  
+      public static void main(String[] args) throws IOException, TimeoutException {
+          //获取一个连接
+          Connection connection = ConnectionUtils.getConnection();
+          //从连接中获取一个通道
+          Channel channel = connection.createChannel();
+          //声明交换机,设置为路由模式
+          channel.exchangeDeclare(EXCHANGE_NAME, "direct");
+          //发送消息
+          String msg = "Hello Publish_Subscribe !";
+          //定义路由键
+          String routingKey = "info";
+          channel.basicPublish(EXCHANGE_NAME, routingKey, null, msg.getBytes());
+          System.out.println("****发送了一条消息：" + msg);
+  
+          //关闭资源连接
+          channel.close();
+          connection.close();
+      }
+  
+  }
+  ```
+
+  消费者1：
+
+  ```java
+  package com.example.routing;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.AMQP;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  import com.rabbitmq.client.DefaultConsumer;
+  import com.rabbitmq.client.Envelope;
+  
+  /**
+   *  路由模式消费者1：产生一个队列，绑定到交换机，从队列中获取指定路由键类型的消息
+   */
+  public class Consumer1 {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_direct";
+      //设置消息的队列名称，例如发送邮件的队列
+      private static final String QUEUE_NAME = "test_queue_direct_1";
+  
+      public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+          //获取连接
+          Connection connection = ConnectionUtils.getConnection();
+          //创建频道
+          final Channel channel = connection.createChannel();
+          //队列声明
+          channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+  
+          //绑定队列到交换机
+          String routingKey = "error";
+          channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, routingKey); //指定队列路由键
+  
+          //保证队列一次只分发一个
+          channel.basicQos(1);
+  
+          //定义消费者
+          DefaultConsumer consumer = new DefaultConsumer(channel){
+              @Override
+              public void handleDelivery(String consumerTag, Envelope envelope,
+                                         AMQP.BasicProperties properties, byte[] body) throws IOException {
+                  String msg = new String(body, "UTF-8");
+                  System.out.println("****收到了一条消息：" + msg);
+  
+                  try {
+                      //模拟业务耗时操作
+                      Thread.sleep(50);
+                  } catch (InterruptedException e) {
+                      e.printStackTrace();
+                  }finally {
+                      System.out.println(msg + "：处理完成");
+                      //处理完成手动应答
+                      channel.basicAck(envelope.getDeliveryTag(), false);
+                  }
+              }
+          };
+  
+          //监听队列
+          boolean autoAck = false; //自动应答关闭
+          channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+      }
+  }
+  ```
+
+  消费者2：
+
+  ```java
+  package com.example.routing;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.AMQP;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  import com.rabbitmq.client.DefaultConsumer;
+  import com.rabbitmq.client.Envelope;
+  
+  /**
+   * 路由模式消费者2：产生一个队列，绑定到交换机，从队列中获取指定路由键类型的消息
+   */
+  public class Consumer2 {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_direct";
+      //设置消息的队列名称，例如发送邮件的队列
+      private static final String QUEUE_NAME = "test_queue_direct_2";
+  
+      public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+          //获取连接
+          Connection connection = ConnectionUtils.getConnection();
+          //创建频道
+          final Channel channel = connection.createChannel();
+          //队列声明
+          channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+  
+          //绑定队列到交换机
+          channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, "info");    //指定队列路由键
+          channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, "warning"); //指定队列路由键
+          channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, "error");   //指定队列路由键
+  
+          //保证队列一次只分发一个
+          channel.basicQos(1);
+  
+          //定义消费者
+          DefaultConsumer consumer = new DefaultConsumer(channel){
+              @Override
+              public void handleDelivery(String consumerTag, Envelope envelope,
+                                         AMQP.BasicProperties properties, byte[] body) throws IOException {
+                  String msg = new String(body, "UTF-8");
+                  System.out.println("****收到了一条消息：" + msg);
+  
+                  try {
+                      //模拟业务耗时操作
+                      Thread.sleep(50);
+                  } catch (InterruptedException e) {
+                      e.printStackTrace();
+                  }finally {
+                      System.out.println(msg + "：处理完成");
+                      //处理完成手动应答
+                      channel.basicAck(envelope.getDeliveryTag(), false);
+                  }
+              }
+          };
+  
+          //监听队列
+          boolean autoAck = false; //自动应答关闭
+          channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+      }
+  }
+  ```
+
+  测试结果：
+
+  Producer生产者发送 error类型路由键的消息：
+
+  ![1555147092501](README.assets/1555147092501.png)
+
+  消费者1和消费者2都能接收到消息：
+
+  ![1555147120227](README.assets/1555147120227.png)
+
+  
+
+  生产者发送一条info类型路由键消息：
+
+  ![1555147156227](README.assets/1555147156227.png)
+
+  
+
+  只有消费者2能接收到：
+
+  ![1555147194993](README.assets/1555147194993.png)
+
+  因为消费者2设置接收的路由键类型是包含info的：
+
+  ![1555147234314](README.assets/1555147234314.png)
+
+  而消费者1只有error:
+
+  ![1555147253037](README.assets/1555147253037.png)
+
