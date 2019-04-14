@@ -1084,3 +1084,226 @@ Direct (处理路由键)：将消息发送到指定的、匹配的队列相当�
 
   ![1555147253037](README.assets/1555147253037.png)
 
+#### **3.7 主题模式**
+
+* 模型
+
+  Topic exchange ：将路由键和某模式匹配（根据规则匹配查找对应的队列）
+
+  \# 匹配一个或多个
+
+  \* 匹配一个
+
+  例如  发送  goods.add.one ，goods.# 能匹配   goods.* 不能匹配，但是发送 goods.add 都能匹配；
+
+  相当于正则表达式匹配了；
+
+  ![1555206609199](README.assets/1555206609199.png)
+
+![1555206615768](README.assets/1555206615768.png)
+
+* 代码示例
+
+  生产者：
+
+  ```java
+  package com.example.topic;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  
+  /**
+   * 主题模式生产者：例如发布一个商品信息消息
+   */
+  public class Producer {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_topic";
+  
+      public static void main(String[] args) throws IOException, TimeoutException {
+          //获取一个连接
+          Connection connection = ConnectionUtils.getConnection();
+  
+          //从连接中获取一个通道
+          Channel channel = connection.createChannel();
+  
+          //声明交换机,设置为主题模式
+          channel.exchangeDeclare(EXCHANGE_NAME, "topic");
+  
+          //发送消息
+          String msg = "Hello Topic !";
+  
+          //发布主题消息
+          String type = "goods.delete";
+          channel.basicPublish(EXCHANGE_NAME, type, null, msg.getBytes());
+  
+          System.out.println("****发送了一条消息：" + msg + "  ；类型：" + type);
+  
+          //关闭资源连接
+          channel.close();
+          connection.close();
+      }
+  
+  }
+  ```
+
+  消费者1：
+
+  ```java
+  package com.example.topic;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.AMQP;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  import com.rabbitmq.client.DefaultConsumer;
+  import com.rabbitmq.client.Envelope;
+  
+  /**
+   * 主题模式消费者1：产生一个队列，绑定到交换机，根据主题匹配规则接受消息
+   */
+  public class Consumer1 {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_topic";
+      //设置消息的队列名称
+      private static final String QUEUE_NAME = "test_queue_topic_1";
+  
+      public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+          //获取连接
+          Connection connection = ConnectionUtils.getConnection();
+          //创建频道
+          final Channel channel = connection.createChannel();
+          //队列声明
+          channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+  
+          //绑定队列到交换机
+          channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, "goods.#"); //规则定义为接收goods. 所有类型消息
+  
+          //保证队列一次只分发一个
+          channel.basicQos(1);
+  
+          //定义消费者
+          DefaultConsumer consumer = new DefaultConsumer(channel){
+              @Override
+              public void handleDelivery(String consumerTag, Envelope envelope,
+                                         AMQP.BasicProperties properties, byte[] body) throws IOException {
+                  String msg = new String(body, "UTF-8");
+                  System.out.println("****收到了一条消息：" + msg);
+  
+                  try {
+                      //模拟业务耗时操作
+                      Thread.sleep(50);
+                  } catch (InterruptedException e) {
+                      e.printStackTrace();
+                  }finally {
+                      System.out.println(msg + "：处理完成");
+                      //处理完成手动应答
+                      channel.basicAck(envelope.getDeliveryTag(), false);
+                  }
+              }
+          };
+  
+          //监听队列
+          boolean autoAck = false; //自动应答关闭
+          channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+      }
+  }
+  ```
+
+  消费者2：
+
+  ```java
+  package com.example.topic;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.AMQP;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  import com.rabbitmq.client.DefaultConsumer;
+  import com.rabbitmq.client.Envelope;
+  
+  /**
+   * 主题模式消费者2：产生一个队列，绑定到交换机，根据主题匹配规则接受消息
+   */
+  public class Consumer2 {
+      //定义交换机名称
+      private static final String EXCHANGE_NAME = "test_exchange_topic";
+      //设置消息的队列名称
+      private static final String QUEUE_NAME = "test_queue_topic_2";
+  
+      public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+          //获取连接
+          Connection connection = ConnectionUtils.getConnection();
+          //创建频道
+          final Channel channel = connection.createChannel();
+          //队列声明
+          channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+  
+          //绑定队列到交换机
+          channel.queueBind(QUEUE_NAME, EXCHANGE_NAME, "goods.add"); //只接收类型为goods.add的消息
+  
+          //保证队列一次只分发一个
+          channel.basicQos(1);
+  
+          //定义消费者
+          DefaultConsumer consumer = new DefaultConsumer(channel){
+              @Override
+              public void handleDelivery(String consumerTag, Envelope envelope,
+                                         AMQP.BasicProperties properties, byte[] body) throws IOException {
+                  String msg = new String(body, "UTF-8");
+                  System.out.println("****收到了一条消息：" + msg);
+  
+                  try {
+                      //模拟业务耗时操作
+                      Thread.sleep(50);
+                  } catch (InterruptedException e) {
+                      e.printStackTrace();
+                  }finally {
+                      System.out.println(msg + "：处理完成");
+                      //处理完成手动应答
+                      channel.basicAck(envelope.getDeliveryTag(), false);
+                  }
+              }
+          };
+  
+          //监听队列
+          boolean autoAck = false; //自动应答关闭
+          channel.basicConsume(QUEUE_NAME, autoAck,consumer);
+      }
+  }
+  ```
+
+  生产者生产一条 goods.delete 的消息：
+
+  ![1555206834343](README.assets/1555206834343.png)
+
+  消费者1消费了消息：
+
+  ![1555206876544](README.assets/1555206876544.png)
+
+  因为消费者1设置的模式能够匹配发送的消息格式：
+
+  ![1555206911742](README.assets/1555206911742.png)
+
+  
+
+  生产者生产一条goods.add的消息：
+
+  ![1555206956355](README.assets/1555206956355.png)
+
+  消费1和消费者2都消费到了消息：
+
+  ![1555206985716](README.assets/1555206985716.png)
+
+  消费者1的goods.#能够匹配上述两条消息，消费2的goods.add只能消费goods.add消息，所以能接收到第二条消息；
+
+  
