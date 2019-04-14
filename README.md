@@ -1306,4 +1306,134 @@ Direct (处理路由键)：将消息发送到指定的、匹配的队列相当�
 
   消费者1的goods.#能够匹配上述两条消息，消费2的goods.add只能消费goods.add消息，所以能接收到第二条消息；
 
+### **4. 消息确认机制（事务+confirm）**
+
+在rabbitmq中我们可以通过持久化数据解决rabbitmq服务器异常导致数据丢失问题；
+
+问题：生产者将消息发送出去之后，消息到底有没有成功的到达rabbitmq服务器，默认情况下是不知道的；
+解决方案：
+
+两者方式：
+
+I. AMQP 实现了事务机制
+
+II. Confirm模式
+
+#### 4.1 事务机制
+
+* 基本操作
+
+  **txSelect** : 用户将当前channel设置成transaction模式；
+
+  **txCommit** : 用于提交事务；
+
+  **txRollback** : 回滚事务；
+
+* 代码示例
+
+  生产者：
+
+  ```java
+  package com.example.tx;
   
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  
+  /**
+   *  事务管理
+   */
+  public class Producer {
+      //定义队列名称
+      private static final String QUEUE_NAME = "test_queue_transaction";
+  
+      public static void main(String[] args) throws IOException, TimeoutException {
+          //获取一个连接
+          Connection connection = ConnectionUtils.getConnection();
+  
+          //从连接中获取一个通道
+          Channel channel = connection.createChannel();
+          //创建队列声明
+          channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+  
+          try{
+              //开启事务
+              channel.txSelect();
+  
+              //定义要发送的消息
+              String msg = "Hello Transaction!";
+              channel.basicPublish("", QUEUE_NAME, null, msg.getBytes());
+              System.out.println("----发送了一条消息：" + msg);
+  
+              //提交事务
+              channel.txCommit();
+          }catch (Exception e){
+              //事务回滚
+              channel.txRollback();
+              System.out.println("产生异常，消息未成功发送！");
+          }
+  
+          //关闭资源连接
+          channel.close();
+          connection.close();
+      }
+  }
+  ```
+  
+  消费者：
+
+  ```java
+package com.example.tx;
+  
+  import java.io.IOException;
+  import java.util.concurrent.TimeoutException;
+  
+  import com.example.simple.ConnectionUtils;
+  import com.rabbitmq.client.AMQP;
+  import com.rabbitmq.client.Channel;
+  import com.rabbitmq.client.Connection;
+  import com.rabbitmq.client.DefaultConsumer;
+  import com.rabbitmq.client.Envelope;
+  
+  /**
+   *  简单队列消费者
+   */
+  public class Consumer {
+      //获取消息的队列名称
+      private static final String QUEUE_NAME = "test_queue_transaction";
+  
+      public static void main(String[] args) throws IOException, TimeoutException, InterruptedException {
+          //获取连接
+          Connection connection = ConnectionUtils.getConnection();
+  
+          //创建频道
+          Channel channel = connection.createChannel();
+          //队列声明
+          channel.queueDeclare(QUEUE_NAME, false, false, false, null);
+  
+          //定义消费者
+          DefaultConsumer consumer = new DefaultConsumer(channel){
+              @Override
+              public void handleDelivery(String consumerTag, Envelope envelope,
+                                         AMQP.BasicProperties properties, byte[] body) throws IOException {
+                  String msg = new String(body);
+                  System.out.println("****收到了一条消息：" + msg);
+              }
+          };
+  
+          //监听队列
+          channel.basicConsume(QUEUE_NAME, consumer);
+      }
+  
+  }
+  ```
+  
+  我们先开启消费者等待消费，然后生产者发送消息，正常情况下生产者发送消息，消费者接收到消息;
+
+  但是期间产生了异常，不过我们用事务进行处理，保证消息并未发送出去：
+
+  ![1555223616128](README.assets/1555223616128.png)
+
