@@ -1386,7 +1386,7 @@ II. Confirm模式
   消费者：
 
   ```java
-package com.example.tx;
+  package com.example.tx;
   
   import java.io.IOException;
   import java.util.concurrent.TimeoutException;
